@@ -1,0 +1,76 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install CMake
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake
+    
+    - name: Configure CMake
+      run: cmake -B build -S .
+    
+    - name: Build
+      run: cmake --build build
+    
+    - name: Run Tests
+      run: ctest --test-dir build --output-on-failure
+    
+    - name: Upload Library Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: libsrec
+        path: build/srec/libsrec.a
+        retention-days: 30
+    
+    - name: Upload Binary Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: srec-binaries
+        path: |
+          build/bin2srec
+          build/srec2bin
+          build/sreccheck
+        retention-days: 30
+
+  build-multi-platform:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Configure CMake
+      run: cmake -B build -S .
+    
+    - name: Build
+      run: cmake --build build
+    
+    - name: Run Tests
+      run: ctest --test-dir build --output-on-failure
+    
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: srec-${{ matrix.os }}
+        path: |
+          build/srec/libsrec.a
+          build/bin2srec*
+          build/srec2bin*
+          build/sreccheck*
+        retention-days: 30

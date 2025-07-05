@@ -611,8 +611,8 @@ TEST_CASE("SrecFile operations", "[SrecFile]") {
 // Test CRC32 function
 TEST_CASE("CRC32 calculation", "[CRC32]") {
     SECTION("Empty data") {
-        unsigned char data[] = {};
-        unsigned int crc = tierone::srec::xcrc32(data, 0, 0);
+        unsigned char dummy = 0;
+        unsigned int crc = tierone::srec::xcrc32(&dummy, 0, 0);
         REQUIRE(crc == 0);
     }
     

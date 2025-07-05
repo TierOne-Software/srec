@@ -4,7 +4,7 @@ add_library(srec srec.cpp)
 set_target_properties(srec PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION 1
-    PUBLIC_HEADER "srec.h;crc32.h"
+    PUBLIC_HEADER "srec.h;crc32.h;srec_exceptions.h"
 )
 
 # Include directories

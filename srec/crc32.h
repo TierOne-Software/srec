@@ -83,7 +83,7 @@ static const unsigned int crc32_table[] =
    make it easy to compose the values of multiple blocks.
 */
 
-static unsigned int xcrc32(const unsigned char *buf, unsigned long len, unsigned int init)
+inline unsigned int xcrc32(const unsigned char *buf, unsigned long len, unsigned int init)
 {
   unsigned int crc = init;
   while (len--) {

@@ -27,6 +27,10 @@ namespace tierone::srec {
 
 // Convert a std::string to a hex string
 std::string ASCIIToHexString(const std::string &buffer) {
+	// Pre-allocate result string for better performance
+	std::string result;
+	result.reserve(buffer.size() * 2);
+	
 	std::stringstream ss;
 	ss << std::uppercase << std::hex << std::setfill('0');
 	for (const auto &c : buffer) {
@@ -47,9 +51,9 @@ void convert_bin_to_srec(std::ifstream &input, SrecFile &sfile, const bool want_
 	unsigned int sum = 0;
 
 	// Read input file and write to Srecord file
-	while (input.read(reinterpret_cast<char*>(buffer.data()), buffer.size()) || input.gcount() > 0) {
+	while (input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size())) || input.gcount() > 0) {
 		// resize buffer in case the last read was less than the 'bytes_to_read'
-		buffer.resize(input.gcount());
+		buffer.resize(static_cast<size_t>(input.gcount()));
 
 		sfile.write_record_payload(buffer);
 		sum = xcrc32(buffer.data(), buffer.size(), sum);
@@ -79,10 +83,10 @@ void write_checksum(const SrecFile &srecfile, const unsigned int sum) {
 
 	// Convert crc32 to byte vector
 	std::vector<uint8_t> crc32bytes;
-	crc32bytes.push_back((sum >> 24) & 0xFF);
-	crc32bytes.push_back((sum >> 16) & 0xFF);
-	crc32bytes.push_back((sum >> 8) & 0xFF);
-	crc32bytes.push_back(sum & 0xFF);
+	crc32bytes.push_back(static_cast<uint8_t>((sum >> 24) & 0xFF));
+	crc32bytes.push_back(static_cast<uint8_t>((sum >> 16) & 0xFF));
+	crc32bytes.push_back(static_cast<uint8_t>((sum >> 8) & 0xFF));
+	crc32bytes.push_back(static_cast<uint8_t>(sum & 0xFF));
 	crc32bytes.push_back(0); // null
 
 	// Write header
@@ -144,7 +148,7 @@ void convert_srec_to_bin(const std::string &input_file, const std::string &outpu
 				output.write(reinterpret_cast<const char *>(&byte), 1);
 			} catch (const std::exception &e) {
 				//std::cerr << "Failed to parse hex data: " << e.what() << std::endl;
-				throw std::ios_base::failure("Failed to parse hex data: " + e.what());
+				throw std::ios_base::failure("Failed to parse hex data: " + std::string(e.what()));
 			}
 		}
 		output.flush();
@@ -155,10 +159,10 @@ void convert_srec_to_bin(const std::string &input_file, const std::string &outpu
 }
 
 // Parse an S-record string and return an Srec objec
-SrecFile::SrecFile(const std::string &filename, SrecFile::AddressSize address_size, unsigned int address)
-	: filename(filename),
-	  address(address),
-	  exec_address(address),
+SrecFile::SrecFile(const std::string &file_name, SrecFile::AddressSize address_size, unsigned int start_address)
+	: filename(file_name),
+	  address(start_address),
+	  exec_address(start_address),
 	  address_size_bits(address_size)
 {
 	file.open(filename, std::ios::trunc | std::ios::in | std::ios::out);
@@ -185,14 +189,28 @@ unsigned int SrecFile::max_data_bytes_per_record() const {
 			return 255 - 1 - 6 - 1; // max data - byte_count -  address_width - checksum
 		case AddressSize::BITS32:
 			return 255 - 1 - 8 - 1; // max data - byte_count -  address_width - checksum
+		default:
+			return 0;
 	}
-	return 0;
 }
 
 // Write record data (S1/S2/S3) to file
 void SrecFile::write_record_payload(const std::vector<uint8_t> &buffer) {
 	if (!this->file.is_open()) {
-		throw std::ios_base::failure("File is not open: " + this->filename);
+		throw SrecFileException("File is not open", this->filename);
+	}
+	
+	// Check security limits
+	if (record_count >= MAX_RECORD_COUNT) {
+		throw SrecValidationException(
+			"Maximum record count exceeded",
+			SrecValidationException::ValidationError::DATA_TOO_LARGE
+		);
+	}
+	
+	// Check if adding this buffer would cause address overflow
+	if (buffer.size() > 0 && address > UINT32_MAX - buffer.size()) {
+		throw SrecAddressException(address + buffer.size(), UINT32_MAX);
 	}
 
 	// Create the record type based on the address size
@@ -207,6 +225,8 @@ void SrecFile::write_record_payload(const std::vector<uint8_t> &buffer) {
 		case AddressSize::BITS32:
 			record_type = std::make_unique<Srec3>(address, buffer);
 			break;
+		default:
+			throw SrecValidationException("Invalid address size", SrecValidationException::ValidationError::INVALID_FORMAT);
 	}
 	// Write the record to the file
 	this->file << record_type->toString() << std::endl;
@@ -220,11 +240,14 @@ void SrecFile::write_record_payload(const std::vector<uint8_t> &buffer) {
 // Write record count (S5/S6) to file
 void SrecFile::write_record_count() {
 	if (!this->file.is_open()) {
-		throw std::ios_base::failure("File is not open: " + this->filename);
+		throw SrecFileException("File is not open", this->filename);
 	}
 
 	if (this->record_count > 0xFFFFFF) {
-		throw std::out_of_range("Record count must be less than 0xFFFFFF");
+		throw SrecValidationException(
+			"Record count exceeds maximum of 16777215 (0xFFFFFF)",
+			SrecValidationException::ValidationError::DATA_TOO_LARGE
+		);
 	}
 
 	// Create the record type based on the record count
@@ -243,7 +266,7 @@ void SrecFile::write_record_count() {
 // Write record termination (S7/S8/S9) to file
 void SrecFile::write_record_termination() {
 	if (!this->file.is_open()) {
-		throw std::ios_base::failure("File is not open: " + this->filename);
+		throw SrecFileException("File is not open", this->filename);
 	}
 
 	std::unique_ptr<Srec> record;
@@ -257,6 +280,8 @@ void SrecFile::write_record_termination() {
 		case AddressSize::BITS32:
 			record = std::make_unique<Srec7>(exec_address);
 			break;
+		default:
+			throw SrecValidationException("Invalid address size", SrecValidationException::ValidationError::INVALID_FORMAT);
 	}
 	// Write the record to the file
 	this->file << record->toString() << std::endl;
@@ -265,7 +290,7 @@ void SrecFile::write_record_termination() {
 
 void SrecFile::write_header(const std::vector<std::string> &header_data) {
 	if (!this->file.is_open()) {
-		throw std::ios_base::failure("File is not open: " + this->filename);
+		throw SrecFileException("File is not open", this->filename);
 	}
 
 	// Write the header data to the file
@@ -279,7 +304,7 @@ void SrecFile::write_header(const std::vector<std::string> &header_data) {
 
 void SrecFile::write_header(const std::vector<uint8_t> &header_data) {
 	if (!this->file.is_open()) {
-		throw std::ios_base::failure("File is not open: " + this->filename);
+		throw SrecFileException("File is not open", this->filename);
 	}
 
 	// Write the header data to the file

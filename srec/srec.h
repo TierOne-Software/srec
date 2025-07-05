@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef SREC_H_
-#define SREC_H_
+#pragma once
 
 #include <fstream>
 #include <string>
@@ -25,7 +24,11 @@
 #include <cinttypes>
 #include <cstddef>
 
+namespace tierone::srec {
+
 std::string ASCIIToHexString(const std::string &buffer);
+
+
 
 
 // Base class for Srecords
@@ -395,4 +398,10 @@ public:
 	}
 };
 
-#endif /* SREC_H_ */
+
+void convert_bin_to_srec(std::ifstream &input, SrecFile &sfile, bool want_checksum);
+void write_checksum(const SrecFile &srecfile, unsigned int sum);
+void convert_srec_to_bin(const std::string &input_file, const std::string &output_file);
+
+} // namespace tierone::srec
+

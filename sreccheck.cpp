@@ -94,7 +94,7 @@ int main(int argc, char *argv[]) {
 			for (unsigned int i = start; i < line.size()-2/*skip checksum*/; i += 2) {
 				buff.push_back(static_cast<uint8_t>(std::stoul(line.substr(i, 2), nullptr, 16)));
 			}
-			sum = xcrc32(buff.data(), buff.size(), sum);
+			sum = tierone::srec::xcrc32(buff.data(), buff.size(), sum);
 		}
 	}
 

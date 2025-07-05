@@ -1,5 +1,6 @@
-#ifndef _CRC32_HPP_
-#define _CRC32_HPP_
+#pragma once
+
+namespace tierone::srec {
 
 /* For more information on CRC, see, e.g.,
    http://www.ross.net/crc/download/crc_v3.txt. */
@@ -92,4 +93,5 @@ static unsigned int xcrc32(const unsigned char *buf, unsigned long len, unsigned
   return crc;
 }
 
-#endif // _CRC32_HPP_
+} // namespace tierone::srec
+

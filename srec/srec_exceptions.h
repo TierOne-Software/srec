@@ -93,7 +93,8 @@ public:
         INVALID_FORMAT,
         INVALID_ADDRESS,
         DATA_TOO_LARGE,
-        INVALID_RECORD_TYPE
+        INVALID_RECORD_TYPE,
+        USER_CANCELLED
     };
     
 private:

@@ -122,10 +122,10 @@ TEST_CASE("Srec base class functionality", "[Srec]") {
     }
     
     SECTION("data size validation") {
-        // Test with data exceeding 255 bytes
+        // Test with data exceeding 254 bytes (255 - 1 for checksum)
         std::vector<uint8_t> large_data(256, 0xAA);
         tierone::srec::Srec1 large_rec(0, large_data);
-        REQUIRE_THROWS_AS(large_rec.toString(), std::invalid_argument);
+        REQUIRE_THROWS_AS(large_rec.toString(), tierone::srec::SrecValidationException);
     }
 }
 
@@ -849,4 +849,308 @@ TEST_CASE("Integration: Roundtrip Conversion Test", "[Integration]") {
     std::remove(binary_file.c_str());
     std::remove(srec_file.c_str());
     std::remove(bin_output.c_str());
+}
+
+// ============================================================================
+// Streaming API Tests
+// ============================================================================
+
+TEST_CASE("SrecStreamParser - parse_line functionality", "[streaming]") {
+    SECTION("Parse valid S1 record") {
+        // S1 record with byte count 0x06 = 2 addr + 3 data + 1 checksum
+        std::string line = "S1061000010203E3";
+        auto record = tierone::srec::SrecStreamParser::parse_line(line, 1, true);
+        
+        REQUIRE(record.type == tierone::srec::Srec::Type::S1);
+        REQUIRE(record.address == 0x1000);
+        REQUIRE(record.data.size() == 3);
+        REQUIRE(record.data[0] == 0x01);
+        REQUIRE(record.data[1] == 0x02);
+        REQUIRE(record.data[2] == 0x03);
+        REQUIRE(record.checksum == 0xE3);
+        REQUIRE(record.checksum_valid == true);
+        REQUIRE(record.line_number == 1);
+    }
+    
+    SECTION("Parse valid S0 header record") {
+        std::string line = "S00F000068656C6C6F202020202000003C";
+        auto record = tierone::srec::SrecStreamParser::parse_line(line, 1, true);
+        
+        REQUIRE(record.type == tierone::srec::Srec::Type::S0);
+        REQUIRE(record.address == 0x0000);
+        REQUIRE(record.data.size() == 12);
+        // Check that data contains "hello       " (with spaces)
+        std::string data_str(record.data.begin(), record.data.end());
+        REQUIRE(data_str.substr(0, 5) == "hello");
+        REQUIRE(record.checksum_valid == true);
+    }
+    
+    SECTION("Parse S2 record with 24-bit address") {
+        // S2 record with byte count 0x07 = 3 addr + 3 data + 1 checksum
+        std::string line = "S20712345601020300";
+        auto record = tierone::srec::SrecStreamParser::parse_line(line, 1, false); // Skip checksum validation
+        
+        REQUIRE(record.type == tierone::srec::Srec::Type::S2);
+        REQUIRE(record.address == 0x123456);
+        REQUIRE(record.data.size() == 3);
+        REQUIRE(record.data[0] == 0x01);
+        REQUIRE(record.data[1] == 0x02);
+        REQUIRE(record.data[2] == 0x03);
+    }
+    
+    SECTION("Parse S3 record with 32-bit address") {
+        // S3 record with byte count 0x08 = 4 addr + 3 data + 1 checksum
+        std::string line = "S3081234567801020300";
+        auto record = tierone::srec::SrecStreamParser::parse_line(line, 1, false);
+        
+        REQUIRE(record.type == tierone::srec::Srec::Type::S3);
+        REQUIRE(record.address == 0x12345678);
+        REQUIRE(record.data.size() == 3);
+    }
+    
+    SECTION("Parse S9 termination record") {
+        std::string line = "S9031000EC";
+        auto record = tierone::srec::SrecStreamParser::parse_line(line, 1, true);
+        
+        REQUIRE(record.type == tierone::srec::Srec::Type::S9);
+        REQUIRE(record.address == 0x1000);
+        REQUIRE(record.data.size() == 0);
+        REQUIRE(record.checksum_valid == true);
+    }
+    
+    SECTION("Invalid record - too short") {
+        std::string line = "S1";
+        REQUIRE_THROWS_AS(tierone::srec::SrecStreamParser::parse_line(line, 1, true), 
+                         tierone::srec::SrecParseException);
+    }
+    
+    SECTION("Invalid record - bad character") {
+        std::string line = "S113100001020304050607080910111XE3";
+        REQUIRE_THROWS_AS(tierone::srec::SrecStreamParser::parse_line(line, 1, true), 
+                         tierone::srec::SrecParseException);
+    }
+    
+    SECTION("Invalid record - wrong length") {
+        std::string line = "S11310000102030405060708091011"; // Missing bytes
+        REQUIRE_THROWS_AS(tierone::srec::SrecStreamParser::parse_line(line, 1, true), 
+                         tierone::srec::SrecParseException);
+    }
+    
+    SECTION("Invalid checksum") {
+        std::string line = "S1061000010203FF"; // Wrong checksum (should be E2)
+        REQUIRE_THROWS_AS(tierone::srec::SrecStreamParser::parse_line(line, 1, true), 
+                         tierone::srec::SrecValidationException);
+    }
+}
+
+TEST_CASE("SrecStreamParser - stream parsing", "[streaming]") {
+    SECTION("Parse multiple records from stream") {
+        std::string srec_data = 
+            "S00F000068656C6C6F202020202000003C\n"
+            "S1061000010203E3\n"
+            "S1061020040506C0\n"
+            "S9030000FC\n";
+        
+        std::istringstream stream(srec_data);
+        std::vector<tierone::srec::SrecStreamParser::ParsedRecord> records;
+        
+        tierone::srec::SrecStreamParser::parse_stream(stream, 
+            [&records](const tierone::srec::SrecStreamParser::ParsedRecord &record) -> bool {
+                records.push_back(record);
+                return true; // Continue parsing
+            }, false); // Skip checksum validation for this test
+        
+        REQUIRE(records.size() == 4);
+        REQUIRE(records[0].type == tierone::srec::Srec::Type::S0);
+        REQUIRE(records[1].type == tierone::srec::Srec::Type::S1);
+        REQUIRE(records[2].type == tierone::srec::Srec::Type::S1);
+        REQUIRE(records[3].type == tierone::srec::Srec::Type::S9);
+        
+        // Check addresses
+        REQUIRE(records[1].address == 0x1000);
+        REQUIRE(records[2].address == 0x1020);
+        REQUIRE(records[3].address == 0x0000);
+    }
+    
+    SECTION("Stop parsing early via callback") {
+        std::string srec_data = 
+            "S00F000068656C6C6F202020202000003C\n"
+            "S1061000010203E3\n"
+            "S1061020040506C0\n"
+            "S9030000FC\n";
+        
+        std::istringstream stream(srec_data);
+        std::vector<tierone::srec::SrecStreamParser::ParsedRecord> records;
+        
+        tierone::srec::SrecStreamParser::parse_stream(stream, 
+            [&records](const tierone::srec::SrecStreamParser::ParsedRecord &record) -> bool {
+                records.push_back(record);
+                return records.size() < 2; // Stop after 2 records
+            }, false);
+        
+        REQUIRE(records.size() == 2);
+        REQUIRE(records[0].type == tierone::srec::Srec::Type::S0);
+        REQUIRE(records[1].type == tierone::srec::Srec::Type::S1);
+    }
+    
+    SECTION("Skip empty lines and whitespace") {
+        std::string srec_data = 
+            "\n"
+            "   \n"
+            "S00F000068656C6C6F202020202000003C\n"
+            "\t\n"
+            "S9030000FC\n"
+            "  \n";
+        
+        std::istringstream stream(srec_data);
+        std::vector<tierone::srec::SrecStreamParser::ParsedRecord> records;
+        
+        tierone::srec::SrecStreamParser::parse_stream(stream, 
+            [&records](const tierone::srec::SrecStreamParser::ParsedRecord &record) -> bool {
+                records.push_back(record);
+                return true;
+            }, false);
+        
+        REQUIRE(records.size() == 2);
+        REQUIRE(records[0].type == tierone::srec::Srec::Type::S0);
+        REQUIRE(records[1].type == tierone::srec::Srec::Type::S9);
+    }
+}
+
+TEST_CASE("SrecStreamConverter - streaming conversion", "[streaming]") {
+    SECTION("Convert small binary data to S-record") {
+        // Create test binary data
+        std::vector<uint8_t> test_data = {
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+        };
+        
+        std::istringstream input_stream(std::string(test_data.begin(), test_data.end()));
+        std::string output_file = "test_streaming_output.srec";
+        
+        size_t progress_bytes = 0;
+        size_t progress_total = 0;
+        int progress_calls = 0;
+        
+        // Convert with progress callback
+        tierone::srec::SrecStreamConverter::convert_stream(
+            input_stream,
+            output_file,
+            tierone::srec::SrecFile::AddressSize::BITS16,
+            0x1000, // start address
+            false,  // no checksum
+            [&](size_t bytes_processed, size_t total_bytes) -> bool {
+                progress_bytes = bytes_processed;
+                progress_total = total_bytes;
+                progress_calls++;
+                return true; // Continue
+            },
+            8 // Small buffer size to test chunking
+        );
+        
+        // Verify progress was reported
+        REQUIRE(progress_calls > 0);
+        REQUIRE(progress_bytes == test_data.size());
+        
+        // Verify output file was created
+        std::ifstream output(output_file);
+        REQUIRE(output.is_open());
+        
+        // Parse the output and verify content
+        std::vector<tierone::srec::SrecStreamParser::ParsedRecord> records;
+        tierone::srec::SrecStreamParser::parse_stream(output,
+            [&records](const tierone::srec::SrecStreamParser::ParsedRecord &record) -> bool {
+                records.push_back(record);
+                return true;
+            }, false);
+        
+        output.close();
+        
+        // Should have data records, count record, and termination record
+        REQUIRE(records.size() >= 3);
+        
+        // Find data records and verify content
+        std::vector<uint8_t> reconstructed_data;
+        for (const auto &record : records) {
+            if (record.type == tierone::srec::Srec::Type::S1) {
+                reconstructed_data.insert(reconstructed_data.end(), 
+                                        record.data.begin(), record.data.end());
+            }
+        }
+        
+        REQUIRE(reconstructed_data == test_data);
+        
+        // Clean up
+        std::remove(output_file.c_str());
+    }
+    
+    SECTION("Test conversion cancellation") {
+        std::vector<uint8_t> test_data(1000, 0x55); // 1KB of 0x55
+        std::istringstream input_stream(std::string(test_data.begin(), test_data.end()));
+        std::string output_file = "test_cancel_output.srec";
+        
+        int callback_count = 0;
+        
+        // Convert but cancel after first callback
+        REQUIRE_THROWS_AS(
+            tierone::srec::SrecStreamConverter::convert_stream(
+                input_stream,
+                output_file,
+                tierone::srec::SrecFile::AddressSize::BITS16,
+                0,
+                false,
+                [&callback_count](size_t, size_t) -> bool {
+                    callback_count++;
+                    return false; // Cancel conversion
+                },
+                100
+            ),
+            tierone::srec::SrecValidationException
+        );
+        
+        REQUIRE(callback_count == 1);
+        
+        // Clean up (file might exist partially)
+        std::remove(output_file.c_str());
+    }
+}
+
+TEST_CASE("SrecStreamParser - file parsing", "[streaming]") {
+    SECTION("Parse S-record file") {
+        // Create a test S-record file
+        std::string test_file = "test_parse_file.srec";
+        std::ofstream file(test_file);
+        REQUIRE(file.is_open());
+        
+        file << "S00F000068656C6C6F202020202000003C\n";
+        file << "S1061000010203E2\n";
+        file << "S1061020040506D2\n";
+        file << "S9030000FC\n";
+        file.close();
+        
+        std::vector<tierone::srec::SrecStreamParser::ParsedRecord> records;
+        
+        tierone::srec::SrecStreamParser::parse_file(test_file,
+            [&records](const tierone::srec::SrecStreamParser::ParsedRecord &record) -> bool {
+                records.push_back(record);
+                return true;
+            }, false);
+        
+        REQUIRE(records.size() == 4);
+        REQUIRE(records[0].type == tierone::srec::Srec::Type::S0);
+        REQUIRE(records[3].type == tierone::srec::Srec::Type::S9);
+        
+        // Clean up
+        std::remove(test_file.c_str());
+    }
+    
+    SECTION("File not found") {
+        REQUIRE_THROWS_AS(
+            tierone::srec::SrecStreamParser::parse_file("nonexistent_file.srec",
+                [](const tierone::srec::SrecStreamParser::ParsedRecord &) -> bool {
+                    return true;
+                }, false),
+            tierone::srec::SrecFileException
+        );
+    }
 }

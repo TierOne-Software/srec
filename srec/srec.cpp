@@ -313,4 +313,312 @@ void SrecFile::write_header(const std::vector<uint8_t> &header_data) {
 	this->file.flush();
 }
 
+// ============================================================================
+// Streaming API Implementation
+// ============================================================================
+
+uint8_t SrecStreamParser::hex_char_to_byte(char c) {
+	if (c >= '0' && c <= '9') {
+		return static_cast<uint8_t>(c - '0');
+	} else if (c >= 'A' && c <= 'F') {
+		return static_cast<uint8_t>(c - 'A' + 10);
+	} else if (c >= 'a' && c <= 'f') {
+		return static_cast<uint8_t>(c - 'a' + 10);
+	} else {
+		throw SrecParseException("Invalid hex character: " + std::string(1, c));
+	}
+}
+
+uint8_t SrecStreamParser::parse_hex_byte(const std::string &hex_str, size_t offset) {
+	if (offset + 1 >= hex_str.size()) {
+		throw SrecParseException("Incomplete hex byte at offset " + std::to_string(offset));
+	}
+	uint8_t high = hex_char_to_byte(hex_str[offset]);
+	uint8_t low = hex_char_to_byte(hex_str[offset + 1]);
+	return static_cast<uint8_t>((high << 4) | low);
+}
+
+Srec::Type SrecStreamParser::char_to_type(char type_char) {
+	switch (type_char) {
+		case '0': return Srec::Type::S0;
+		case '1': return Srec::Type::S1;
+		case '2': return Srec::Type::S2;
+		case '3': return Srec::Type::S3;
+		case '5': return Srec::Type::S5;
+		case '6': return Srec::Type::S6;
+		case '7': return Srec::Type::S7;
+		case '8': return Srec::Type::S8;
+		case '9': return Srec::Type::S9;
+		default:
+			throw SrecParseException("Invalid S-record type: " + std::string(1, type_char));
+	}
+}
+
+SrecStreamParser::ParsedRecord SrecStreamParser::parse_line(const std::string &line, 
+                                                           size_t line_number,
+                                                           bool validate_checksum) {
+	ParsedRecord record{};
+	record.line_number = line_number;
+	record.checksum_valid = false;
+
+	// Skip empty lines and comments
+	if (line.empty() || line[0] != 'S') {
+		throw SrecParseException("Invalid S-record format", line_number);
+	}
+
+	// Minimum length: S + type + count (2 chars) + checksum (2 chars) = 6 chars
+	if (line.length() < 6) {
+		throw SrecParseException("S-record too short", line_number);
+	}
+
+	try {
+		// Parse type
+		record.type = char_to_type(line[1]);
+
+		// Parse byte count
+		uint8_t byte_count = parse_hex_byte(line, 2);
+		
+		// Validate record length
+		// Total length = 'S' + type + count (2 chars) + (byte_count * 2 chars per byte)
+		size_t expected_length = 4 + (byte_count * 2);
+		if (line.length() != expected_length) {
+			std::ostringstream oss;
+			oss << "S-record length mismatch: expected " << expected_length 
+			    << ", got " << line.length() 
+			    << " (byte_count=" << static_cast<unsigned int>(byte_count) << ")"
+			    << " at line " << line_number;
+			throw SrecParseException(oss.str(), line_number);
+		}
+
+		// Parse address based on record type
+		size_t address_bytes = 0;
+		size_t data_start_offset = 4;
+		
+		switch (record.type) {
+			case Srec::Type::S0:
+				address_bytes = 2;
+				record.address = (parse_hex_byte(line, 4) << 8) | parse_hex_byte(line, 6);
+				data_start_offset = 8;
+				break;
+			case Srec::Type::S1:
+			case Srec::Type::S9:
+				address_bytes = 2;
+				record.address = (parse_hex_byte(line, 4) << 8) | parse_hex_byte(line, 6);
+				data_start_offset = 8;
+				break;
+			case Srec::Type::S2:
+			case Srec::Type::S8:
+				address_bytes = 3;
+				record.address = (parse_hex_byte(line, 4) << 16) | 
+				                (parse_hex_byte(line, 6) << 8) | 
+				                parse_hex_byte(line, 8);
+				data_start_offset = 10;
+				break;
+			case Srec::Type::S3:
+			case Srec::Type::S7:
+				address_bytes = 4;
+				record.address = (parse_hex_byte(line, 4) << 24) | 
+				                (parse_hex_byte(line, 6) << 16) |
+				                (parse_hex_byte(line, 8) << 8) | 
+				                parse_hex_byte(line, 10);
+				data_start_offset = 12;
+				break;
+			case Srec::Type::S5:
+				address_bytes = 2;
+				record.address = (parse_hex_byte(line, 4) << 8) | parse_hex_byte(line, 6);
+				data_start_offset = 8;
+				break;
+			case Srec::Type::S6:
+				address_bytes = 3;
+				record.address = (parse_hex_byte(line, 4) << 16) | 
+				                (parse_hex_byte(line, 6) << 8) | 
+				                parse_hex_byte(line, 8);
+				data_start_offset = 10;
+				break;
+		}
+
+		// Parse data bytes
+		size_t data_bytes = byte_count - address_bytes - 1; // -1 for checksum
+		record.data.reserve(data_bytes);
+		
+		for (size_t i = 0; i < data_bytes; ++i) {
+			uint8_t byte_val = parse_hex_byte(line, data_start_offset + (i * 2));
+			record.data.push_back(byte_val);
+		}
+
+		// Parse checksum
+		size_t checksum_offset = data_start_offset + (data_bytes * 2);
+		record.checksum = parse_hex_byte(line, checksum_offset);
+
+		// Validate checksum if requested
+		if (validate_checksum) {
+			uint32_t sum = byte_count;
+			
+			// Add address bytes to sum
+			for (size_t i = 0; i < address_bytes; ++i) {
+				sum += parse_hex_byte(line, 4 + (i * 2));
+			}
+			
+			// Add data bytes to sum
+			for (uint8_t data_byte : record.data) {
+				sum += data_byte;
+			}
+			
+			uint8_t calculated_checksum = static_cast<uint8_t>(~sum & 0xFF);
+			record.checksum_valid = (calculated_checksum == record.checksum);
+			
+			if (!record.checksum_valid) {
+				std::ostringstream oss;
+				oss << "Checksum validation failed on line " << line_number
+				    << ": expected 0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(2) 
+				    << static_cast<unsigned int>(calculated_checksum)
+				    << ", got 0x" << std::setw(2) << static_cast<unsigned int>(record.checksum);
+				throw SrecValidationException(
+					oss.str(),
+					SrecValidationException::ValidationError::CHECKSUM_MISMATCH
+				);
+			}
+		} else {
+			record.checksum_valid = true; // Assume valid when not validating
+		}
+
+	} catch (const SrecException &) {
+		throw; // Re-throw our exceptions
+	} catch (const std::exception &e) {
+		throw SrecParseException("Parse error on line " + std::to_string(line_number) + 
+		                        ": " + std::string(e.what()), line_number);
+	}
+
+	return record;
+}
+
+void SrecStreamParser::parse_stream(std::istream &input_stream, 
+                                   RecordCallback callback,
+                                   bool validate_checksums) {
+	std::string line;
+	size_t line_number = 0;
+	
+	while (std::getline(input_stream, line)) {
+		++line_number;
+		
+		// Skip empty lines
+		if (line.empty() || line.find_first_not_of(" \t\r\n") == std::string::npos) {
+			continue;
+		}
+		
+		// Remove trailing whitespace
+		line.erase(line.find_last_not_of(" \t\r\n") + 1);
+		
+		try {
+			ParsedRecord record = parse_line(line, line_number, validate_checksums);
+			
+			// Call user callback
+			if (!callback(record)) {
+				break; // User requested to stop parsing
+			}
+		} catch (const SrecParseException &e) {
+			// Re-throw with line context if not already included
+			if (e.getLineNumber() == 0) {
+				throw SrecParseException(e.what(), line_number);
+			} else {
+				throw;
+			}
+		}
+	}
+	
+	if (input_stream.bad()) {
+		throw SrecFileException("Stream read error", "");
+	}
+}
+
+void SrecStreamParser::parse_file(const std::string &filename,
+                                 RecordCallback callback,
+                                 bool validate_checksums) {
+	std::ifstream file(filename);
+	if (!file.is_open()) {
+		throw SrecFileException("Failed to open file", filename);
+	}
+	
+	try {
+		parse_stream(file, callback, validate_checksums);
+	} catch (const SrecException &) {
+		file.close();
+		throw;
+	}
+	
+	file.close();
+}
+
+void SrecStreamConverter::convert_stream(std::istream &input,
+                                        const std::string &output_filename,
+                                        SrecFile::AddressSize address_size,
+                                        uint32_t start_address,
+                                        bool want_checksum,
+                                        ProgressCallback progress_callback,
+                                        size_t buffer_size) {
+	// Create output file
+	SrecFile sfile(output_filename, address_size, start_address);
+	if (!sfile.is_open()) {
+		throw SrecFileException("Failed to create output file", output_filename);
+	}
+
+	// Get input stream size if possible
+	size_t total_bytes = 0;
+	if (input.tellg() != -1) {
+		input.seekg(0, std::ios::end);
+		total_bytes = static_cast<size_t>(input.tellg());
+		input.seekg(0, std::ios::beg);
+	}
+
+	// Calculate optimal record size
+	size_t max_record_size = sfile.max_data_bytes_per_record();
+	size_t chunk_size = std::min(buffer_size, max_record_size);
+	
+	std::vector<uint8_t> buffer(chunk_size);
+	size_t bytes_processed = 0;
+	uint32_t crc_sum = 0;
+	
+	// Process input in chunks
+	while (input.read(reinterpret_cast<char*>(buffer.data()), 
+	                 static_cast<std::streamsize>(buffer.size())) || input.gcount() > 0) {
+		                 
+		size_t bytes_read = static_cast<size_t>(input.gcount());
+		buffer.resize(bytes_read);
+		
+		// Write data record
+		sfile.write_record_payload(buffer);
+		
+		// Update CRC if needed
+		if (want_checksum) {
+			crc_sum = xcrc32(buffer.data(), buffer.size(), crc_sum);
+		}
+		
+		bytes_processed += bytes_read;
+		
+		// Call progress callback if provided
+		if (progress_callback && !progress_callback(bytes_processed, total_bytes)) {
+			throw SrecValidationException("Conversion aborted by user", 
+			                             SrecValidationException::ValidationError::USER_CANCELLED);
+		}
+		
+		// Reset buffer size for next iteration
+		buffer.resize(chunk_size);
+	}
+	
+	// Check for read errors
+	if (input.bad()) {
+		throw SrecFileException("Input stream read error", "");
+	}
+	
+	// Write record count and termination
+	sfile.write_record_count();
+	sfile.write_record_termination();
+	sfile.close();
+	
+	// Add checksum header if requested
+	if (want_checksum) {
+		write_checksum(sfile, crc_sum);
+	}
+}
+
 } // namespace tierone::srec

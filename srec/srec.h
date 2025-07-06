@@ -24,6 +24,7 @@
 #include <cinttypes>
 #include <cstddef>
 #include <limits>
+#include <functional>
 
 #include "srec_exceptions.h"
 
@@ -662,6 +663,113 @@ void write_checksum(const SrecFile &srecfile, unsigned int sum);
  * @note Only processes S1, S2, and S3 data records
  */
 void convert_srec_to_bin(const std::string &input_file, const std::string &output_file);
+
+/**
+ * @brief Streaming S-record parser for memory-efficient processing
+ * 
+ * Provides line-by-line parsing of S-record files without loading
+ * the entire file into memory. Suitable for processing very large files.
+ * 
+ * @note This class is not thread-safe
+ */
+class SrecStreamParser {
+public:
+	/**
+	 * @brief Parsed S-record information
+	 */
+	struct ParsedRecord {
+		Srec::Type type;           ///< Record type (S0-S9)
+		uint32_t address;          ///< Address field (if applicable)
+		std::vector<uint8_t> data; ///< Data payload
+		uint8_t checksum;          ///< Parsed checksum
+		bool checksum_valid;       ///< Whether checksum validation passed
+		size_t line_number;        ///< Line number in file (1-based)
+	};
+
+	/**
+	 * @brief Callback function type for processing records
+	 * @param record Parsed record information
+	 * @return true to continue parsing, false to stop
+	 */
+	using RecordCallback = std::function<bool(const ParsedRecord &record)>;
+
+	/**
+	 * @brief Parse S-record file with callback processing
+	 * @param input_stream Input stream containing S-record data
+	 * @param callback Function called for each parsed record
+	 * @param validate_checksums Whether to validate checksums (default: true)
+	 * @throws SrecParseException on parsing errors
+	 * @throws SrecValidationException on validation failures
+	 */
+	static void parse_stream(std::istream &input_stream, 
+	                        RecordCallback callback,
+	                        bool validate_checksums = true);
+
+	/**
+	 * @brief Parse S-record file with callback processing
+	 * @param filename Path to S-record file
+	 * @param callback Function called for each parsed record
+	 * @param validate_checksums Whether to validate checksums (default: true)
+	 * @throws SrecFileException on file I/O errors
+	 * @throws SrecParseException on parsing errors
+	 */
+	static void parse_file(const std::string &filename,
+	                      RecordCallback callback,
+	                      bool validate_checksums = true);
+
+	/**
+	 * @brief Parse a single S-record line
+	 * @param line S-record line to parse
+	 * @param line_number Line number for error reporting
+	 * @param validate_checksum Whether to validate checksum
+	 * @return Parsed record information
+	 * @throws SrecParseException on parsing errors
+	 */
+	static ParsedRecord parse_line(const std::string &line, 
+	                              size_t line_number = 0,
+	                              bool validate_checksum = true);
+
+private:
+	static uint8_t hex_char_to_byte(char c);
+	static uint8_t parse_hex_byte(const std::string &hex_str, size_t offset);
+	static Srec::Type char_to_type(char type_char);
+};
+
+/**
+ * @brief Memory-efficient binary to S-record converter with progress callbacks
+ * 
+ * Provides streaming conversion with progress reporting and memory limits.
+ */
+class SrecStreamConverter {
+public:
+	/**
+	 * @brief Progress callback function type
+	 * @param bytes_processed Number of bytes processed so far
+	 * @param total_bytes Total file size (0 if unknown)
+	 * @return true to continue, false to abort conversion
+	 */
+	using ProgressCallback = std::function<bool(size_t bytes_processed, size_t total_bytes)>;
+
+	/**
+	 * @brief Convert binary stream to S-record format with streaming
+	 * @param input Input binary stream
+	 * @param output Output S-record file
+	 * @param address_size Address size for records
+	 * @param start_address Starting address (default: 0)
+	 * @param want_checksum Include CRC32 checksum header (default: false)
+	 * @param progress_callback Optional progress reporting callback
+	 * @param buffer_size Buffer size for reading (default: 64KB)
+	 * @throws SrecFileException on file errors
+	 * @throws SrecValidationException on validation errors
+	 */
+	static void convert_stream(std::istream &input,
+	                          const std::string &output_filename,
+	                          SrecFile::AddressSize address_size,
+	                          uint32_t start_address = 0,
+	                          bool want_checksum = false,
+	                          ProgressCallback progress_callback = nullptr,
+	                          size_t buffer_size = 65536);
+};
 
 } // namespace tierone::srec
 

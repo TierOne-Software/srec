@@ -23,10 +23,52 @@ The Motorola S-record format is a widely used file format for storing binary dat
 
 The library can be found under the 'srec' directory and provides:
 
+### Core Features
 - Classes for each S-record type (Srec0, Srec1, etc.)
 - SrecFile class for reading/writing S-record files
+- Custom exception hierarchy for robust error handling
 - CRC32 calculation for file verification
 - Uses C++17 features
+
+### Streaming API
+The library includes a modern streaming API for memory-efficient processing of large S-record files:
+
+- **SrecStreamParser**: Line-by-line parsing without loading entire files into memory
+- **SrecStreamConverter**: Memory-efficient binary to S-record conversion with progress reporting
+- **Callback-based processing**: Flexible data handling with user-defined callbacks
+- **Progress reporting**: Real-time progress updates for long-running operations
+- **Cancellation support**: Ability to abort operations gracefully
+
+#### Example Usage
+
+```cpp
+#include "srec/srec.h"
+
+// Parse an S-record file with streaming API
+tierone::srec::SrecStreamParser::parse_file("input.srec",
+    [](const tierone::srec::SrecStreamParser::ParsedRecord &record) -> bool {
+        std::cout << "Record type: S" << static_cast<int>(record.type) 
+                  << ", Address: 0x" << std::hex << record.address 
+                  << ", Data size: " << record.data.size() << std::endl;
+        return true; // Continue parsing
+    });
+
+// Convert binary stream to S-record with progress reporting
+std::ifstream input("large_file.bin", std::ios::binary);
+tierone::srec::SrecStreamConverter::convert_stream(
+    input,
+    "output.srec",
+    tierone::srec::SrecFile::AddressSize::BITS32,
+    0x10000000, // start address
+    true,       // include checksum
+    [](size_t bytes_processed, size_t total_bytes) -> bool {
+        if (total_bytes > 0) {
+            std::cout << "Progress: " << (bytes_processed * 100 / total_bytes) 
+                      << "%" << std::endl;
+        }
+        return true; // Continue conversion
+    });
+```
 
 ## Utilities
 
@@ -116,10 +158,21 @@ The library and utilities include comprehensive tests:
 
 ### Unit Tests
 
-Unit tests are implemented using the Catch2 framework and test all components of the SREC library:
+Unit tests are implemented using the Catch2 framework and comprehensively test all components of the SREC library:
+
+- **Core functionality**: S-record parsing, writing, and validation
+- **Streaming API**: Memory-efficient parsing and conversion
+- **Error handling**: Exception testing for various failure scenarios
+- **Edge cases**: Boundary conditions and malformed input handling
+- **Progress reporting**: Callback functionality and cancellation support
 
 ```bash
 ctest --test-dir build_host
+```
+
+To run only the streaming API tests:
+```bash
+ctest --test-dir build_host -R streaming
 ```
 
 ### Integration Tests

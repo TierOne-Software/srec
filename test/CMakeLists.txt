@@ -24,9 +24,16 @@ list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(CTest)
 include(Catch)
 
-# Only discover tests if not cross-compiling (since cross-compiled binaries can't run on host)
+# Configure tests based on platform and cross-compilation
 if(NOT CMAKE_CROSSCOMPILING)
-    catch_discover_tests(test_srec)
+    # Use test discovery on Unix, manual test registration on Windows
+    if(WIN32)
+        # On Windows with multi-config generators, avoid test discovery issues
+        add_test(NAME test_srec COMMAND test_srec)
+    else()
+        # Use Catch2 test discovery on Unix systems
+        catch_discover_tests(test_srec)
+    endif()
 else()
     # For cross-compilation, just add the test manually without discovery
     add_test(NAME test_srec COMMAND test_srec)

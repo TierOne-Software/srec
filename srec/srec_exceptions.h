@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-#pragma once
+#ifndef TIERONE_SREC_EXCEPTIONS_H
+#define TIERONE_SREC_EXCEPTIONS_H
 
+#include <cstdint>
 #include <exception>
 #include <string>
 #include <sstream>
@@ -88,7 +90,7 @@ public:
  */
 class SrecValidationException : public SrecException {
 public:
-    enum class ValidationError {
+    enum class ValidationError : std::uint8_t {
         CHECKSUM_MISMATCH,
         INVALID_FORMAT,
         INVALID_ADDRESS,
@@ -137,3 +139,5 @@ private:
 };
 
 } // namespace tierone::srec
+
+#endif // TIERONE_SREC_EXCEPTIONS_H

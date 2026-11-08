@@ -24,7 +24,7 @@
 #include "srec/srec.h"
 #include "srec/crc32.h"
 
-int main(int argc, char *argv[]) {
+static int run(int argc, char *argv[]) {
 
 	// Define arguments
 	argparse::ArgumentParser program("sreccheck");
@@ -35,8 +35,8 @@ int main(int argc, char *argv[]) {
 	try {
 		program.parse_args(argc, argv);
 	} catch (const std::exception &err) {
-		std::cerr << "Parsing command line arguments failed" << std::endl;
-		std::cerr << err.what() << std::endl;
+		std::cerr << "Parsing command line arguments failed" << '\n';
+		std::cerr << err.what() << '\n';
 		std::cerr << program;
 		return 1;
 	}
@@ -46,8 +46,8 @@ int main(int argc, char *argv[]) {
 	try {
 		srecfilename = program.get<std::string>("file");
 	} catch (const std::exception &err) {
-		std::cerr << "No file specified" << std::endl;
-		std::cerr << err.what() << std::endl;
+		std::cerr << "No file specified" << '\n';
+		std::cerr << err.what() << '\n';
 		std::cerr << program;
 		return 1;
 	}
@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
 	// Open file
 	std::ifstream srecfile(srecfilename);
 	if (!srecfile.is_open()) {
-		std::cerr << "Failed to open file" << std::endl;
+		std::cerr << "Failed to open file" << '\n';
 		return 1;
 	}
 	srecfile.close();
@@ -89,25 +89,34 @@ int main(int argc, char *argv[]) {
 				return true;
 			});
 	} catch (const std::exception &err) {
-		std::cerr << "Invalid S-record file: " << err.what() << std::endl;
+		std::cerr << "Invalid S-record file: " << err.what() << '\n';
 		return 1;
 	}
 
 	// Print results, if verbose flag is set
 	if (program.get<bool>("verbose")) {
-		std::cout << "Found CRC:       0x" << std::uppercase << std::hex << found_crc << std::endl;
-		std::cout << "Calculated CRC:  0x" << std::uppercase << std::hex << sum << std::endl;
+		std::cout << "Found CRC:       0x" << std::uppercase << std::hex << found_crc << '\n';
+		std::cout << "Calculated CRC:  0x" << std::uppercase << std::hex << sum << '\n';
 	}
 	if (found_crc == sum) {
 		if (program.get<bool>("verbose")) {
-			std::cout << "CRC matches" << std::endl;
+			std::cout << "CRC matches" << '\n';
 		}
 		return 0;
 	} else {
-		std::cout << "CRC does not match" << std::endl;
+		std::cout << "CRC does not match" << '\n';
 		if (program.get<bool>("verbose")) {
-			std::cerr << "CRC check failed. Expected: " << std::hex << found_crc << ", got 0x" << sum << std::endl;
+			std::cerr << "CRC check failed. Expected: " << std::hex << found_crc << ", got 0x" << sum << '\n';
 		}
+		return 1;
+	}
+}
+
+int main(int argc, char *argv[]) {
+	try {
+		return run(argc, argv);
+	} catch (const std::exception &err) {
+		std::cerr << "Unexpected error: " << err.what() << '\n';
 		return 1;
 	}
 }

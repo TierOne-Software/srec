@@ -666,7 +666,7 @@ TEST_CASE("Integration: Roundtrip Conversion Test", "[Integration]") {
     {
         std::ofstream bin_out(binary_file, std::ios::binary);
         REQUIRE(bin_out.is_open());
-        bin_out.write(reinterpret_cast<const char*>(original_data.data()), original_data.size());
+        bin_out.write(reinterpret_cast<const char*>(original_data.data()), static_cast<std::streamsize>(original_data.size()));
         bin_out.close();
     }
     
@@ -686,8 +686,8 @@ TEST_CASE("Integration: Roundtrip Conversion Test", "[Integration]") {
         unsigned int sum = 0;
         
         // Read and convert
-        while (input.read(reinterpret_cast<char*>(buffer.data()), buffer.size()) || input.gcount() > 0) {
-            buffer.resize(input.gcount());
+        while (input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size())) || input.gcount() > 0) {
+            buffer.resize(static_cast<size_t>(input.gcount()));
             sfile.write_record_payload(buffer);
             sum = tierone::srec::xcrc32(buffer.data(), buffer.size(), sum);
             buffer.resize(bytes_to_read);
@@ -706,10 +706,10 @@ TEST_CASE("Integration: Roundtrip Conversion Test", "[Integration]") {
         
         // Convert crc32 to byte vector
         std::vector<uint8_t> crc32bytes;
-        crc32bytes.push_back((sum >> 24) & 0xFF);
-        crc32bytes.push_back((sum >> 16) & 0xFF);
-        crc32bytes.push_back((sum >> 8) & 0xFF);
-        crc32bytes.push_back(sum & 0xFF);
+        crc32bytes.push_back(static_cast<uint8_t>((sum >> 24) & 0xFF));
+        crc32bytes.push_back(static_cast<uint8_t>((sum >> 16) & 0xFF));
+        crc32bytes.push_back(static_cast<uint8_t>((sum >> 8) & 0xFF));
+        crc32bytes.push_back(static_cast<uint8_t>(sum & 0xFF));
         crc32bytes.push_back(0); // null
         
         // Write header
@@ -736,7 +736,7 @@ TEST_CASE("Integration: Roundtrip Conversion Test", "[Integration]") {
         REQUIRE(srecfile.is_open());
         
         unsigned long found_crc = 0;
-        unsigned long calculated_sum = 0;
+        unsigned int calculated_sum = 0;
         std::string line;
         std::vector<uint8_t> buff;
         

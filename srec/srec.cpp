@@ -191,7 +191,7 @@ void SrecFile::write_record_payload(const std::vector<uint8_t> &buffer) {
 	
 	// Check if adding this buffer would cause address overflow
 	if (buffer.size() > 0 && address > UINT32_MAX - buffer.size()) {
-		throw SrecAddressException(address + buffer.size(), UINT32_MAX);
+		throw SrecAddressException(static_cast<uint32_t>(address + buffer.size()), UINT32_MAX);
 	}
 
 	// Create the record type based on the address size
@@ -210,12 +210,12 @@ void SrecFile::write_record_payload(const std::vector<uint8_t> &buffer) {
 			throw SrecValidationException("Invalid address size", SrecValidationException::ValidationError::INVALID_FORMAT);
 	}
 	// Write the record to the file
-	this->file << record_type->toString() << std::endl;
+	this->file << record_type->toString() << '\n';
 	this->file.flush();
 
 	// Update the record count and address
 	this->record_count++;
-	this->address += buffer.size();
+	this->address += static_cast<unsigned int>(buffer.size());
 }
 
 // Write record count (S5/S6) to file
@@ -240,7 +240,7 @@ void SrecFile::write_record_count() {
 	}
 
 	// Write the record to the file
-	this->file << record->toString() << std::endl;
+	this->file << record->toString() << '\n';
 	this->file.flush();
 }
 
@@ -265,7 +265,7 @@ void SrecFile::write_record_termination() {
 			throw SrecValidationException("Invalid address size", SrecValidationException::ValidationError::INVALID_FORMAT);
 	}
 	// Write the record to the file
-	this->file << record->toString() << std::endl;
+	this->file << record->toString() << '\n';
 	this->file.flush();
 }
 
@@ -278,7 +278,7 @@ void SrecFile::write_header(const std::vector<std::string> &header_data) {
 	// the raw data bytes of one S0 record (same as the uint8_t overload)
 	for (const std::string &line : header_data) {
 		auto record = Srec0(line.data(), line.size());
-		this->file << record.toString() << std::endl;
+		this->file << record.toString() << '\n';
 		this->file.flush();
 	}
 }
@@ -290,7 +290,7 @@ void SrecFile::write_header(const std::vector<uint8_t> &header_data) {
 
 	// Write the header data to the file
 	auto record = Srec0(header_data);
-	this->file << record.toString() << std::endl;
+	this->file << record.toString() << '\n';
 	this->file.flush();
 }
 
@@ -361,7 +361,7 @@ SrecStreamParser::ParsedRecord SrecStreamParser::parse_line(const std::string &l
 		
 		// Validate record length
 		// Total length = 'S' + type + count (2 chars) + (byte_count * 2 chars per byte)
-		size_t expected_length = 4 + (byte_count * 2);
+		size_t expected_length = 4 + static_cast<size_t>(byte_count) * 2;
 		if (line.length() != expected_length) {
 			std::ostringstream oss;
 			oss << "S-record length mismatch: expected " << expected_length 
@@ -376,10 +376,6 @@ SrecStreamParser::ParsedRecord SrecStreamParser::parse_line(const std::string &l
 		
 		switch (record.type) {
 			case Srec::Type::S0:
-				address_bytes = 2;
-				record.address = (static_cast<uint32_t>(parse_hex_byte(line, 4)) << 8) | static_cast<uint32_t>(parse_hex_byte(line, 6));
-				data_start_offset = 8;
-				break;
 			case Srec::Type::S1:
 			case Srec::Type::S9:
 				address_bytes = 2;
@@ -415,6 +411,9 @@ SrecStreamParser::ParsedRecord SrecStreamParser::parse_line(const std::string &l
 				                static_cast<uint32_t>(parse_hex_byte(line, 8));
 				data_start_offset = 10;
 				break;
+			default:
+				throw SrecValidationException("Invalid S-record type",
+					SrecValidationException::ValidationError::INVALID_RECORD_TYPE);
 		}
 
 		// Byte count must cover the address field plus the checksum byte
@@ -482,7 +481,7 @@ SrecStreamParser::ParsedRecord SrecStreamParser::parse_line(const std::string &l
 }
 
 void SrecStreamParser::parse_stream(std::istream &input_stream, 
-                                   RecordCallback callback,
+                                   const RecordCallback &callback,
                                    bool validate_checksums) {
 	std::string line;
 	size_t line_number = 0;
@@ -521,7 +520,7 @@ void SrecStreamParser::parse_stream(std::istream &input_stream,
 }
 
 void SrecStreamParser::parse_file(const std::string &filename,
-                                 RecordCallback callback,
+                                 const RecordCallback &callback,
                                  bool validate_checksums) {
 	std::ifstream file(filename);
 	if (!file.is_open()) {
@@ -543,7 +542,7 @@ void SrecStreamConverter::convert_stream(std::istream &input,
                                         SrecFile::AddressSize address_size,
                                         uint32_t start_address,
                                         bool want_checksum,
-                                        ProgressCallback progress_callback,
+                                        const ProgressCallback &progress_callback,
                                         size_t buffer_size) {
 	if (buffer_size == 0) {
 		throw SrecValidationException(

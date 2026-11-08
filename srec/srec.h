@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-#pragma once
+#ifndef TIERONE_SREC_SREC_H
+#define TIERONE_SREC_SREC_H
 
 #include <fstream>
 #include <string>
@@ -56,7 +57,7 @@ public:
 	/**
 	 * @brief S-record type enumeration
 	 */
-	enum class Type {
+	enum class Type : std::uint8_t {
 		S0, ///< Header record
 		S1, ///< Data record with 16-bit address
 		S2, ///< Data record with 24-bit address  
@@ -531,7 +532,7 @@ public:
 	/**
 	 * @brief Address size enumeration for S-record files
 	 */
-	enum class AddressSize {
+	enum class AddressSize : std::uint8_t {
 		BITS16, ///< 16-bit addresses (S1/S9 records)
 		BITS24, ///< 24-bit addresses (S2/S8 records) 
 		BITS32  ///< 32-bit addresses (S3/S7 records)
@@ -548,7 +549,7 @@ private:
 	unsigned int record_count{0};
 	
 	// Security limits
-	static constexpr size_t MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+	static constexpr size_t MAX_FILE_SIZE = size_t{100} * 1024 * 1024; // 100MB
 	static constexpr size_t MAX_RECORD_COUNT = 1000000; // 1M records
 
 
@@ -704,7 +705,7 @@ public:
 	 * @throws SrecValidationException on validation failures
 	 */
 	static void parse_stream(std::istream &input_stream, 
-	                        RecordCallback callback,
+	                        const RecordCallback &callback,
 	                        bool validate_checksums = true);
 
 	/**
@@ -716,7 +717,7 @@ public:
 	 * @throws SrecParseException on parsing errors
 	 */
 	static void parse_file(const std::string &filename,
-	                      RecordCallback callback,
+	                      const RecordCallback &callback,
 	                      bool validate_checksums = true);
 
 	/**
@@ -769,9 +770,10 @@ public:
 	                          SrecFile::AddressSize address_size,
 	                          uint32_t start_address = 0,
 	                          bool want_checksum = false,
-	                          ProgressCallback progress_callback = nullptr,
+	                          const ProgressCallback &progress_callback = nullptr,
 	                          size_t buffer_size = 65536);
 };
 
 } // namespace tierone::srec
 
+#endif // TIERONE_SREC_SREC_H

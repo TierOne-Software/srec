@@ -1,4 +1,5 @@
-#pragma once
+#ifndef TIERONE_SREC_CRC32_H
+#define TIERONE_SREC_CRC32_H
 
 namespace tierone::srec {
 
@@ -95,3 +96,4 @@ inline unsigned int xcrc32(const unsigned char *buf, unsigned long len, unsigned
 
 } // namespace tierone::srec
 
+#endif // TIERONE_SREC_CRC32_H

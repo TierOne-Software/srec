@@ -22,7 +22,7 @@
 #include "srec/srec.h"
 
 
-int main(int argc, char *argv[]) {
+static int run(int argc, char *argv[]) {
 
 	// Define arguments
 	argparse::ArgumentParser program("srec2bin");
@@ -35,22 +35,22 @@ int main(int argc, char *argv[]) {
 	try {
 		program.parse_args(argc, argv);
 	} catch (const std::exception &err) {
-		std::cerr << "Parsing command line arguments failed" << std::endl;
-		std::cerr << err.what() << std::endl;
+		std::cerr << "Parsing command line arguments failed" << '\n';
+		std::cerr << err.what() << '\n';
 		std::cerr << program;
 		return 1;
 	}
 
 	// Check if input file is specified
 	if (!program.present("-i")) {
-		std::cerr << "Input file is not specified" << std::endl;
+		std::cerr << "Input file is not specified" << '\n';
 		std::cerr << program;
 		return 1;
 	}
 
 	// Check if output file is specified
 	if (!program.present("-o")) {
-		std::cerr << "Output file is not specified" << std::endl;
+		std::cerr << "Output file is not specified" << '\n';
 		std::cerr << program;
 		return 1;
 	}
@@ -61,10 +61,18 @@ int main(int argc, char *argv[]) {
     try {
 		tierone::srec::convert_srec_to_bin(input_file, output_file);
 	} catch (const std::exception &err) {
-		std::cerr << "Error converting SREC file: " << err.what() << std::endl;
+		std::cerr << "Error converting SREC file: " << err.what() << '\n';
 		return 1;
 	}
 
 	return 0;
 }
 
+int main(int argc, char *argv[]) {
+	try {
+		return run(argc, argv);
+	} catch (const std::exception &err) {
+		std::cerr << "Unexpected error: " << err.what() << '\n';
+		return 1;
+	}
+}

@@ -25,7 +25,7 @@
 #include "srec/crc32.h"
 
 
-int main(int argc, char *argv[]) {
+static int run(int argc, char *argv[]) {
 	std::string outputfilename;
 	std::string inputfilename;
 
@@ -50,8 +50,8 @@ int main(int argc, char *argv[]) {
 	try {
 		parser.parse_args(argc, argv);
 	} catch (const std::exception &err) {
-		std::cerr << "Parsing command line arguments failed" << std::endl;
-		std::cerr << err.what() << std::endl;
+		std::cerr << "Parsing command line arguments failed" << '\n';
+		std::cerr << err.what() << '\n';
 		std::cerr << parser;
 		return 1;
 	}
@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
 	try {
 		inputfilename = parser.get<std::string>("--input");
 	} catch (const std::exception &err) {
-		std::cerr << "No input file specified: " << err.what() << std::endl;
+		std::cerr << "No input file specified: " << err.what() << '\n';
 		std::cerr << parser;
 		return 1;
 	}
@@ -69,7 +69,7 @@ int main(int argc, char *argv[]) {
 	try {
 		outputfilename = parser.get<std::string>("--output");
 	} catch (const std::exception &err) {
-		std::cerr << "Error getting output filename: " << err.what() << std::endl;
+		std::cerr << "Error getting output filename: " << err.what() << '\n';
 		std::cerr << parser;
 		return 1;
 	}
@@ -77,7 +77,7 @@ int main(int argc, char *argv[]) {
 	// Open input file
 	std::ifstream input(inputfilename, std::ios::binary);
 	if (!input.is_open()) {
-		std::cerr << "Error opening input file" << std::endl;
+		std::cerr << "Error opening input file" << '\n';
 		return 1;
 	}
 
@@ -94,24 +94,32 @@ int main(int argc, char *argv[]) {
 			addrsize = tierone::srec::SrecFile::AddressSize::BITS32;
 			break;
 		default:
-			std::cerr << "Invalid address size" << std::endl;
+			std::cerr << "Invalid address size" << '\n';
 			return 1;
 	}
 
 	// Open output file
 	tierone::srec::SrecFile sfile(outputfilename, addrsize);
 	if (!sfile.is_open()) {
-		std::cerr << "Error opening output file" << std::endl;
+		std::cerr << "Error opening output file" << '\n';
 		return 1;
 	}
 
 	try {
 		tierone::srec::convert_bin_to_srec(input, sfile, parser.get<bool>("--checksum"));
 	} catch (const std::exception &err) {
-		std::cerr << "Error converting binary file: " << err.what() << std::endl;
+		std::cerr << "Error converting binary file: " << err.what() << '\n';
 		return 1;
 	}
 
 	return 0;
 }
 
+int main(int argc, char *argv[]) {
+	try {
+		return run(argc, argv);
+	} catch (const std::exception &err) {
+		std::cerr << "Unexpected error: " << err.what() << '\n';
+		return 1;
+	}
+}

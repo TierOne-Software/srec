@@ -21,6 +21,7 @@
 #include <cstdint>
 
 #include "argparse.hpp"
+#include "srec/srec.h"
 #include "srec/crc32.h"
 
 int main(int argc, char *argv[]) {
@@ -57,45 +58,39 @@ int main(int argc, char *argv[]) {
 		std::cerr << "Failed to open file" << std::endl;
 		return 1;
 	}
+	srecfile.close();
 
 	unsigned long found_crc = 0;
 	unsigned long sum = 0; // calculated CRC
-	std::string line;
-	std::vector<uint8_t> buff;
 
-	while (std::getline(srecfile, line)) {
-		if (line[0] == 'S') {
-			if (line[1] == '0') {
-				// read the CRC, bytes 8-15
-				try {
-					found_crc = std::stoul(line.substr(8, 8), nullptr, 16);
-				} catch (const std::out_of_range &err) {
-					std::cerr << "Failed to parse CRC" << std::endl;
-					std::cerr << err.what() << std::endl;
-					return 1;
+	// Parse the S-record file with the library parser. This validates hex
+	// digits, byte counts, and record checksums; any error is reported and
+	// exits non-zero instead of crashing on malformed input.
+	try {
+		tierone::srec::SrecStreamParser::parse_file(
+			srecfilename,
+			[&](const tierone::srec::SrecStreamParser::ParsedRecord &record) {
+				using tierone::srec::Srec;
+				if (record.type == Srec::Type::S0) {
+					// The CRC32 is stored as the first four data bytes of the S0 record
+					if (record.data.size() >= 4) {
+						found_crc = (static_cast<unsigned long>(record.data[0]) << 24) |
+						            (static_cast<unsigned long>(record.data[1]) << 16) |
+						            (static_cast<unsigned long>(record.data[2]) << 8) |
+						            static_cast<unsigned long>(record.data[3]);
+					}
+				} else if (record.type == Srec::Type::S1 ||
+				           record.type == Srec::Type::S2 ||
+				           record.type == Srec::Type::S3) {
+					sum = tierone::srec::xcrc32(record.data.data(),
+					                            static_cast<unsigned long>(record.data.size()),
+					                            static_cast<unsigned int>(sum));
 				}
-				continue;
-			}
-
-			// determine the index to start at
-			unsigned int start;
-			if (line[1] == '1') {
-				start = 4 /* S1 + byte count */ + 4 /* address */;
-			} else if (line[1] == '2') {
-				start = 4 /* S2 + byte count */ + 6 /* address */;
-			} else if (line[1] == '3') {
-				start = 4 /* S3 + byte count */ + 8 /* address */;
-			} else {
-				// not an S1/S2/S3 record, skip
-				continue;
-			}
-
-			buff.clear();
-			for (unsigned int i = start; i < line.size()-2/*skip checksum*/; i += 2) {
-				buff.push_back(static_cast<uint8_t>(std::stoul(line.substr(i, 2), nullptr, 16)));
-			}
-			sum = tierone::srec::xcrc32(buff.data(), buff.size(), sum);
-		}
+				return true;
+			});
+	} catch (const std::exception &err) {
+		std::cerr << "Invalid S-record file: " << err.what() << std::endl;
+		return 1;
 	}
 
 	// Print results, if verbose flag is set

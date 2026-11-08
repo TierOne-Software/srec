@@ -19,6 +19,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <random>
@@ -539,9 +540,10 @@ TEST_CASE("SrecFile operations", "[SrecFile]") {
         REQUIRE(file.is_open());
         std::string line;
         std::getline(file, line);
-        // The hex representation of "TEST"
-        std::string expected = "S00A00005445535400"; // S0 + length + address(00) + "TEST" in hex + checksum
-        // Note: This doesn't match what we expect because ASCIIToHexString is used
+        // Each string's characters become the raw record data bytes,
+        // identical to write_header({'T','E','S','T'})
+        std::string expected = "S007000054455354B8"; // S0 + count(07) + address(0000) + "TEST" + checksum
+        REQUIRE(line == expected);
         file.close();
     }
     
@@ -1153,4 +1155,76 @@ TEST_CASE("SrecStreamParser - file parsing", "[streaming]") {
             tierone::srec::SrecFileException
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests for issues found by static analysis and fuzzing (2026-11-07)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("convert_srec_to_bin rejects malformed input", "[convert_srec_to_bin]") {
+    std::string infile = "test_malformed.srec";
+    std::string outfile = "test_malformed.bin";
+
+    auto write_input = [&](const std::string &content) {
+        std::ofstream ofs(infile, std::ios::binary);
+        ofs << content;
+        ofs.close();
+    };
+
+    SECTION("short S-record line throws std::ios_base::failure (not std::out_of_range)") {
+        write_input("S1\n");
+        REQUIRE_THROWS_AS(tierone::srec::convert_srec_to_bin(infile, outfile), std::ios_base::failure);
+    }
+
+    SECTION("non-hex data is rejected instead of silently converted") {
+        // "1Z" must not silently become byte 0x01 (std::stoi stops at 'Z')
+        write_input("S10700001Z00\n");
+        REQUIRE_THROWS_AS(tierone::srec::convert_srec_to_bin(infile, outfile), std::ios_base::failure);
+    }
+
+    SECTION("bad record checksum is rejected") {
+        tierone::srec::Srec1 rec(0x1000, std::vector<uint8_t>{0x01, 0x02, 0x03});
+        std::string line = rec.toString();
+        line[line.size() - 1] = (line[line.size() - 1] == '0') ? '1' : '0'; // corrupt checksum digit
+        write_input(line + "\n");
+        REQUIRE_THROWS_AS(tierone::srec::convert_srec_to_bin(infile, outfile), std::ios_base::failure);
+    }
+
+    SECTION("byte count / line length mismatch is rejected") {
+        write_input("S1131000010203\n"); // claims 19 bytes, far too short
+        REQUIRE_THROWS_AS(tierone::srec::convert_srec_to_bin(infile, outfile), std::ios_base::failure);
+    }
+
+    SECTION("valid records convert correctly") {
+        tierone::srec::Srec1 rec(0x1000, std::vector<uint8_t>{0x01, 0x02, 0x03});
+        write_input(rec.toString() + "\n");
+        tierone::srec::convert_srec_to_bin(infile, outfile);
+
+        std::ifstream ifs(outfile, std::ios::binary);
+        std::vector<char> got((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+        REQUIRE(got == std::vector<char>{0x01, 0x02, 0x03});
+    }
+
+    std::remove(infile.c_str());
+    std::remove(outfile.c_str());
+}
+
+TEST_CASE("parse_line rejects byte count smaller than address plus checksum", "[SrecStreamParser]") {
+    // Must throw a clean validation error, not wrap a std::length_error
+    // from the unsigned underflow in the data byte count
+    REQUIRE_THROWS_AS(
+        tierone::srec::SrecStreamParser::parse_line("S5020000", 1, false),
+        tierone::srec::SrecValidationException
+    );
+}
+
+TEST_CASE("SrecStreamConverter rejects zero buffer size", "[SrecStreamConverter]") {
+    std::istringstream input("data");
+    REQUIRE_THROWS_AS(
+        tierone::srec::SrecStreamConverter::convert_stream(
+            input, "test_zero_buf.srec", tierone::srec::SrecFile::AddressSize::BITS32,
+            0, false, nullptr, 0),
+        tierone::srec::SrecValidationException
+    );
+    std::remove("test_zero_buf.srec");
 }

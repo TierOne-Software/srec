@@ -62,6 +62,7 @@ int main(int argc, char *argv[]) {
 		tierone::srec::convert_srec_to_bin(input_file, output_file);
 	} catch (const std::exception &err) {
 		std::cerr << "Error converting SREC file: " << err.what() << std::endl;
+		return 1;
 	}
 
 	return 0;

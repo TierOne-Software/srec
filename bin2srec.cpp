@@ -109,6 +109,7 @@ int main(int argc, char *argv[]) {
 		tierone::srec::convert_bin_to_srec(input, sfile, parser.get<bool>("--checksum"));
 	} catch (const std::exception &err) {
 		std::cerr << "Error converting binary file: " << err.what() << std::endl;
+		return 1;
 	}
 
 	return 0;

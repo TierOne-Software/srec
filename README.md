@@ -95,6 +95,7 @@ bin2srec -i input.bin -o output.srec -b 16 --checksum
 ### srec2bin
 
 This utility converts an S-record file to a binary file.
+Malformed records (bad hex digits, byte count/length mismatch, or bad record checksums) are rejected with an error; invalid data is never silently converted.
 
 Usage:
 ```
@@ -113,6 +114,7 @@ srec2bin -i input.srec -o output.bin
 ### sreccheck
 
 This utility checks the CRC32 of an S-record file.
+Record checksums are validated while reading; malformed records are reported as errors and the utility exits non-zero.
 The checksum is expected to be the first S0 line of the file.
 
 Usage:

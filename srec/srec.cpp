@@ -101,60 +101,41 @@ void write_checksum(const SrecFile &srecfile, const unsigned int sum) {
 	ofs.close();
 
 	// Rename the temp file to the original file
-	std::rename(tempfilename.c_str(), srecfile.getFilename().c_str());
+	if (std::rename(tempfilename.c_str(), srecfile.getFilename().c_str()) != 0) {
+		throw std::ios_base::failure("Failed to install checksum file: " + srecfile.getFilename());
+	}
 }
 
 void convert_srec_to_bin(const std::string &input_file, const std::string &output_file) {
-	std::ifstream input(input_file);
 	std::ofstream output(output_file, std::ios::binary);
-
-	if (!input.is_open()) {
-		throw std::ios_base::failure("Failed to open input file");
-	}
 
 	if (!output.is_open()) {
 		throw std::ios_base::failure("Failed to open output file");
 	}
 
-	std::string line;
-	while (std::getline(input, line)) {
-		if (line.empty()) {
-			continue;
-		}
-
-		if (line[0] != 'S') {
-			continue;
-		}
-		if (line[1] != '1' && line[1] != '2' && line[1] != '3') {
-			continue;
-		}
-		std::string data;
-		if (line[1] == '1') {
-			data = line.substr(4+(Srec1::ADDRESS_SIZE*2)); // cut off S#, byte_count, and address
-			data = data.substr(0, data.size() - 2); // cut off checksum
-		} else if (line[1] == '2') {
-			data = line.substr(4+(Srec2::ADDRESS_SIZE*2)); // cut off S#, byte_count, and address
-			data = data.substr(0, data.size() - 2); // cut off checksum
-		} else if (line[1] == '3') {
-			data = line.substr(4+(Srec3::ADDRESS_SIZE*2));	// cut off S#, byte_count, and address
-			data = data.substr(0, data.size() - 2); // cut off checksum
-		}
-		// walk through the data string and covert each ASCII pair to a byte
-		// and write it to the output file
-		// e.g. "010203" -> 0x01, 0x02, 0x03
-		for (size_t i = 0; i < data.size(); i += 2) {
-			try {
-				auto byte = static_cast<uint8_t>(std::stoi(data.substr(i, 2), nullptr, 16));
-				output.write(reinterpret_cast<const char *>(&byte), 1);
-			} catch (const std::exception &e) {
-				//std::cerr << "Failed to parse hex data: " << e.what() << std::endl;
-				throw std::ios_base::failure("Failed to parse hex data: " + std::string(e.what()));
-			}
-		}
-		output.flush();
+	// Parse with the streaming parser so byte counts, hex digits, and record
+	// checksums are all validated. Only S1/S2/S3 data records carry payload.
+	try {
+		SrecStreamParser::parse_file(
+			input_file,
+			[&output](const SrecStreamParser::ParsedRecord &record) {
+				if (record.type == Srec::Type::S1 ||
+					record.type == Srec::Type::S2 ||
+					record.type == Srec::Type::S3) {
+					if (!record.data.empty()) {
+						output.write(reinterpret_cast<const char *>(record.data.data()),
+									 static_cast<std::streamsize>(record.data.size()));
+					}
+				}
+				return true;
+			},
+			true /* validate record checksums */);
+	} catch (const SrecException &e) {
+		// This function's documented contract is std::ios_base::failure
+		throw std::ios_base::failure(e.what());
 	}
 
-	input.close();
+	output.flush();
 	output.close();
 }
 
@@ -293,10 +274,10 @@ void SrecFile::write_header(const std::vector<std::string> &header_data) {
 		throw SrecFileException("File is not open", this->filename);
 	}
 
-	// Write the header data to the file
+	// Write the header data to the file; each string's characters become
+	// the raw data bytes of one S0 record (same as the uint8_t overload)
 	for (const std::string &line : header_data) {
-		std::string hexStr = ASCIIToHexString(line);
-		auto record = Srec0(hexStr);
+		auto record = Srec0(line.data(), line.size());
 		this->file << record.toString() << std::endl;
 		this->file.flush();
 	}
@@ -385,8 +366,7 @@ SrecStreamParser::ParsedRecord SrecStreamParser::parse_line(const std::string &l
 			std::ostringstream oss;
 			oss << "S-record length mismatch: expected " << expected_length 
 			    << ", got " << line.length() 
-			    << " (byte_count=" << static_cast<unsigned int>(byte_count) << ")"
-			    << " at line " << line_number;
+			    << " (byte_count=" << static_cast<unsigned int>(byte_count) << ")";
 			throw SrecParseException(oss.str(), line_number);
 		}
 
@@ -397,44 +377,53 @@ SrecStreamParser::ParsedRecord SrecStreamParser::parse_line(const std::string &l
 		switch (record.type) {
 			case Srec::Type::S0:
 				address_bytes = 2;
-				record.address = (parse_hex_byte(line, 4) << 8) | parse_hex_byte(line, 6);
+				record.address = (static_cast<uint32_t>(parse_hex_byte(line, 4)) << 8) | static_cast<uint32_t>(parse_hex_byte(line, 6));
 				data_start_offset = 8;
 				break;
 			case Srec::Type::S1:
 			case Srec::Type::S9:
 				address_bytes = 2;
-				record.address = (parse_hex_byte(line, 4) << 8) | parse_hex_byte(line, 6);
+				record.address = (static_cast<uint32_t>(parse_hex_byte(line, 4)) << 8) | static_cast<uint32_t>(parse_hex_byte(line, 6));
 				data_start_offset = 8;
 				break;
 			case Srec::Type::S2:
 			case Srec::Type::S8:
 				address_bytes = 3;
-				record.address = (parse_hex_byte(line, 4) << 16) | 
-				                (parse_hex_byte(line, 6) << 8) | 
-				                parse_hex_byte(line, 8);
+				record.address = (static_cast<uint32_t>(parse_hex_byte(line, 4)) << 16) | 
+				                (static_cast<uint32_t>(parse_hex_byte(line, 6)) << 8) | 
+				                static_cast<uint32_t>(parse_hex_byte(line, 8));
 				data_start_offset = 10;
 				break;
 			case Srec::Type::S3:
 			case Srec::Type::S7:
 				address_bytes = 4;
-				record.address = (parse_hex_byte(line, 4) << 24) | 
-				                (parse_hex_byte(line, 6) << 16) |
-				                (parse_hex_byte(line, 8) << 8) | 
-				                parse_hex_byte(line, 10);
+				record.address = (static_cast<uint32_t>(parse_hex_byte(line, 4)) << 24) | 
+				                (static_cast<uint32_t>(parse_hex_byte(line, 6)) << 16) |
+				                (static_cast<uint32_t>(parse_hex_byte(line, 8)) << 8) | 
+				                static_cast<uint32_t>(parse_hex_byte(line, 10));
 				data_start_offset = 12;
 				break;
 			case Srec::Type::S5:
 				address_bytes = 2;
-				record.address = (parse_hex_byte(line, 4) << 8) | parse_hex_byte(line, 6);
+				record.address = (static_cast<uint32_t>(parse_hex_byte(line, 4)) << 8) | static_cast<uint32_t>(parse_hex_byte(line, 6));
 				data_start_offset = 8;
 				break;
 			case Srec::Type::S6:
 				address_bytes = 3;
-				record.address = (parse_hex_byte(line, 4) << 16) | 
-				                (parse_hex_byte(line, 6) << 8) | 
-				                parse_hex_byte(line, 8);
+				record.address = (static_cast<uint32_t>(parse_hex_byte(line, 4)) << 16) | 
+				                (static_cast<uint32_t>(parse_hex_byte(line, 6)) << 8) | 
+				                static_cast<uint32_t>(parse_hex_byte(line, 8));
 				data_start_offset = 10;
 				break;
+		}
+
+		// Byte count must cover the address field plus the checksum byte
+		if (byte_count < address_bytes + 1) {
+			std::ostringstream oss;
+			oss << "S-record byte count " << static_cast<unsigned int>(byte_count)
+			    << " is too small for this record type (needs at least "
+			    << (address_bytes + 1) << " bytes)";
+			throw SrecValidationException(oss.str(), SrecValidationException::ValidationError::INVALID_FORMAT);
 		}
 
 		// Parse data bytes
@@ -556,6 +545,13 @@ void SrecStreamConverter::convert_stream(std::istream &input,
                                         bool want_checksum,
                                         ProgressCallback progress_callback,
                                         size_t buffer_size) {
+	if (buffer_size == 0) {
+		throw SrecValidationException(
+			"buffer_size must be greater than zero",
+			SrecValidationException::ValidationError::INVALID_FORMAT
+		);
+	}
+
 	// Create output file
 	SrecFile sfile(output_filename, address_size, start_address);
 	if (!sfile.is_open()) {

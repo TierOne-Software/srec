@@ -586,7 +586,8 @@ public:
 
 	/**
 	 * @brief Write header records (S0) from string data
-	 * @param header_data Vector of header strings (converted to ASCII)
+	 * @param header_data Vector of header strings; each string's characters are
+	 *        written as the raw data bytes of one S0 record
 	 * @throws SrecFileException if file is not open
 	 */
 	void write_header(const std::vector<std::string> &header_data);
@@ -597,7 +598,6 @@ public:
 	 * @throws SrecFileException if file is not open
 	 */
 	void write_header(const std::vector<uint8_t> &header_data);
-	
 	/**
 	 * @brief Write data record (S1/S2/S3) with payload
 	 * @param buffer Data bytes to write
@@ -659,7 +659,9 @@ void write_checksum(const SrecFile &srecfile, unsigned int sum);
  * @brief Convert S-record file to binary format
  * @param input_file Path to input S-record file
  * @param output_file Path to output binary file
- * @throws std::ios_base::failure on file I/O errors
+ * @throws std::ios_base::failure on file I/O errors or if the input contains
+ *         malformed or corrupt S-records (bad hex digits, byte count/length
+ *         mismatch, or bad record checksums)
  * @note Only processes S1, S2, and S3 data records
  */
 void convert_srec_to_bin(const std::string &input_file, const std::string &output_file);

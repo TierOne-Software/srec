@@ -93,6 +93,47 @@ run_roundtrip_test() {
     fi
 }
 
+# Malformed input handling: tools must reject bad files with a normal error
+# exit (1), never crash/abort (signal, exit >= 128) and never exit 0 on error
+run_malformed_tests() {
+    local failures=0
+
+    echo ""
+    echo "=== Testing malformed input handling ==="
+
+    printf 'S0060000GG\n'  > "$TEST_DIR/bad_crc.srec"    # non-hex in S0 CRC field
+    printf 'S1\n'          > "$TEST_DIR/short.srec"      # truncated record
+    printf 'S10700001Z00\n' > "$TEST_DIR/bad_hex.srec"   # non-hex in data field
+
+    for f in bad_crc short bad_hex; do
+        local rc=0
+        "$SRECCHECK" "$TEST_DIR/$f.srec" >/dev/null 2>&1 || rc=$?
+        if [ $rc -eq 0 ]; then
+            echo "FAILED: sreccheck accepted malformed $f.srec"
+            failures=$((failures+1))
+        elif [ $rc -ge 128 ]; then
+            echo "FAILED: sreccheck crashed on $f.srec (signal $((rc-128)))"
+            failures=$((failures+1))
+        else
+            echo "OK: sreccheck rejected $f.srec (exit $rc)"
+        fi
+
+        rc=0
+        "$SREC2BIN" -i "$TEST_DIR/$f.srec" -o "$TEST_DIR/bad.bin" >/dev/null 2>&1 || rc=$?
+        if [ $rc -eq 0 ]; then
+            echo "FAILED: srec2bin accepted malformed $f.srec (must exit non-zero)"
+            failures=$((failures+1))
+        elif [ $rc -ge 128 ]; then
+            echo "FAILED: srec2bin crashed on $f.srec (signal $((rc-128)))"
+            failures=$((failures+1))
+        else
+            echo "OK: srec2bin rejected $f.srec (exit $rc)"
+        fi
+    done
+
+    return $failures
+}
+
 # Test with different file sizes and address modes
 run_all_tests() {
     local sizes=(10 100 1000 10000)
@@ -107,11 +148,15 @@ run_all_tests() {
         for bits in "${address_bits[@]}"; do
             echo ""
             if ! run_roundtrip_test $bits; then
-                ((failures++))
+                failures=$((failures+1))
             fi
         done
     done
     
+    local malformed=0
+    run_malformed_tests || malformed=$?
+    failures=$((failures+malformed))
+
     echo ""
     echo "=== Test Summary ==="
     if [ $failures -eq 0 ]; then

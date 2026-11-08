@@ -1,0 +1,8 @@
+# Fuzz build outputs and run data — keep only the harness sources and report
+fuzz_parse
+fuzz_srec_to_bin
+fuzz_roundtrip
+demo_hdr
+demo_misc
+corpus_*/
+artifacts_*/
